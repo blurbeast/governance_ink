@@ -1,146 +1,186 @@
+
 #[cfg(test)]
-    mod tests {
-        /// Imports all the definitions from the outer scope so we can use them here.
-        use super::*;
+mod tests {
+    use ink::env::test;
+    use crate::contract::treasury_governance::*;
+    use ink::H160;
+    use crate::enums::*;
+    use crate::storage::*;
+    use crate::errors::Error;
 
-        /// We test a simple use case of our contract.
-        #[ink::test]
-        fn it_works() {
-            let mut treasury_governance = TreasuryGovernance::new(false);
-            assert_eq!(treasury_governance.get(), false);
-            treasury_governance.flip();
-            assert_eq!(treasury_governance.get(), true);
-        }
-    }
-
-
-    /// This is how you'd write end-to-end (E2E) or integration tests for ink! contracts.
-    ///
-    /// When running these you need to make sure that you:
-    /// - Compile the tests with the `e2e-tests` feature flag enabled (`--features e2e-tests`)
-    /// - Are running a Substrate node which contains `pallet-contracts` in the background
-    #[cfg(all(test, feature = "e2e-tests"))]
-    mod e2e_tests {
-        /// Imports all the definitions from the outer scope so we can use them here.
-        use super::*;
-
-        /// A helper function used for calling contract messages.
-        use ink_e2e::ContractsBackend;
-
-        /// The End-to-End test `Result` type.
-        type E2EResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-        /// We test that we can read and write a value from the on-chain contract.
-        #[ink_e2e::test]
-        async fn it_works(mut client: ink_e2e::Client<C, E>) -> E2EResult<()> {
-            // Given
-            let mut constructor = TreasuryGovernanceRef::new(false);
-            let contract = client
-                .instantiate("treasury_governance", &ink_e2e::bob(), &mut constructor)
-                .submit()
-                .await
-                .expect("instantiate failed");
-            let mut call_builder = contract.call_builder::<TreasuryGovernance>();
-
-            let get = call_builder.get();
-            let get_result = client.call(&ink_e2e::bob(), &get).dry_run().await?;
-            assert!(matches!(get_result.return_value(), false));
-
-            // When
-            let flip = call_builder.flip();
-            let _flip_result = client
-                .call(&ink_e2e::bob(), &flip)
-                .submit()
-                .await
-                .expect("flip failed");
-
-            // Then
-            let get = call_builder.get();
-            let get_result = client.call(&ink_e2e::bob(), &get).dry_run().await?;
-            assert!(matches!(get_result.return_value(), true));
-
-            Ok(())
-        }
+    #[ink::test]
+    fn test_initialization() {
+        let contract = TreasuryGovernance::new();
+        assert_eq!(contract.next_proposal_id, 1);
+        assert_eq!(contract.total_voters, 0);
+        assert_eq!(contract.get_all_proposal_ids().len(), 0);
     }
     
+    #[ink::test]
+    fn test_create_proposal() {
+        let mut contract = TreasuryGovernance::new();
+        
+        let governance_params = GovernanceParameters {
+            voting_period: VotingPeriod::SevenDays,
+            quorum_threshold: QuorumThreshold::Ten,
+            execution_delay: ExecutionDelay::OneDay,
+        };
     
-    use ink::storage::Mapping;
-        use ink::prelude::vec::Vec;
-        use ink::prelude::string::String;
+        let voting_options = VotingOptions {
+            options: vec![
+                String::from("Approve"),
+                String::from("Reject"),
+            ],
+        };
     
-        // ============================================================================
-        // ENUMS AND DATA STRUCTURES
-        // ============================================================================
+        let result = contract.create_proposal(
+            String::from("Test Proposal"),
+            String::from("A test proposal"),
+            ProposalType::Treasury,
+            governance_params,
+            voting_options,
+        );
+        
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+        assert_eq!(contract.get_all_proposal_ids().len(), 1);
+    }
+        
+    #[ink::test]
+    fn test_invalid_proposal_empty_options() {
+        let mut contract = TreasuryGovernance::new();
+                    
+        let governance_params = GovernanceParameters {
+            voting_period: VotingPeriod::ThreeDays,
+            quorum_threshold: QuorumThreshold::Five,
+            execution_delay: ExecutionDelay::Immediately,
+        };
+        
+        let voting_options = VotingOptions {
+            options: Vec::new(),
+        };
+        
+        let result = contract.create_proposal(
+            String::from("Invalid Proposal"),
+            String::from("No options"),
+            ProposalType::Other,
+            governance_params,
+            voting_options,
+        );
+        
+        assert_eq!(result, Err(Error::InvalidProposal));
+    }
+        
+    fn set_caller(account: H160) {
+        test::set_caller(account);
+    }
+       
+    fn default_caller() -> H160 {
+        H160::from_low_u64_be(1)
+    }
     
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        #[ink::scale_derive(Encode, Decode, TypeInfo)]
-        #[cfg_attr(feature = "std", derive(ink::storage::traits::StorageLayout))]
-        pub enum ProposalType {
-            Treasury,
-            Governance,
-            Technical,
-            Other,
-        }
-    
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        #[ink::scale_derive(Encode, Decode, TypeInfo)]
-        #[cfg_attr(feature = "std", derive(ink::storage::traits::StorageLayout))]
-        pub enum VotingPeriod {
-            ThreeDays,
-            SevenDays,
-            FourteenDays,
-            ThirtyDays,
-        }
-    
-        impl VotingPeriod {
-            /// Convert voting period to blocks (6-second block time)
-            pub fn to_blocks(&self) -> u32 {
-                match self {
-                    VotingPeriod::ThreeDays => 3 * 24 * 60 * 10,      // 43,200 blocks
-                    VotingPeriod::SevenDays => 7 * 24 * 60 * 10,      // 100,800 blocks
-                    VotingPeriod::FourteenDays => 14 * 24 * 60 * 10,  // 201,600 blocks
-                    VotingPeriod::ThirtyDays => 30 * 24 * 60 * 10,    // 432,000 blocks
-                }
-            }
-        }
+    #[ink::test]
+    fn test_voting() {
+        let mut contract = TreasuryGovernance::new();
+       
+        // Register a voter (Alice)
+        let alice = test::default_accounts().alice;
+        set_caller(alice);
+        contract.register_voter();
+        let bob = test::default_accounts().bob;
+        set_caller(bob);
+        contract.register_voter();
+               
+        // Create proposal
+        let governance_params = GovernanceParameters {
+            voting_period: VotingPeriod::SevenDays,
+            quorum_threshold: QuorumThreshold::Ten,
+            execution_delay: ExecutionDelay::OneDay,
+        };
+       
+        let voting_options = VotingOptions {
+            options: vec![String::from("Yes"), String::from("No")],
+        };
+       
+        let proposal_id = contract
+            .create_proposal(
+                String::from("Vote Test"),
+                String::from("Testing voting"),
+                ProposalType::Governance,
+                governance_params,
+                voting_options,
+            )
+            .unwrap();
+       
+            // Alice votes "No"
+            set_caller(alice);
+            let result = contract.vote(proposal_id, 1);
+            assert!(result.is_ok());
+       
+            // Check proposal updates
+            let proposal = contract.get_proposal(proposal_id).unwrap();
+            assert_eq!(proposal.vote_counts[0], 0); // "Yes"
+            assert_eq!(proposal.vote_counts[1], 1); // "No"
+            assert_eq!(proposal.total_voters, 1);
+       
+            // Verify stored vote under Alice’s account
+            let user_vote = contract.get_user_vote(proposal_id, alice).unwrap();
+            assert_eq!(user_vote.choice.option_index, 1);
+            assert_eq!(user_vote.choice.option_text, "No");
+    }
+
         
-        
-        use ink::storage::Mapping;
-            use ink::prelude::vec::Vec;
-            use ink::prelude::string::String;
-        
-            // ============================================================================
-            // ENUMS AND DATA STRUCTURES
-            // ============================================================================
-        
-            #[derive(Debug, Clone, PartialEq, Eq)]
-            #[ink::scale_derive(Encode, Decode, TypeInfo)]
-            #[cfg_attr(feature = "std", derive(ink::storage::traits::StorageLayout))]
-            pub enum ProposalType {
-                Treasury,
-                Governance,
-                Technical,
-                Other,
-            }
-        
-            #[derive(Debug, Clone, PartialEq, Eq)]
-            #[ink::scale_derive(Encode, Decode, TypeInfo)]
-            #[cfg_attr(feature = "std", derive(ink::storage::traits::StorageLayout))]
-            pub enum VotingPeriod {
-                ThreeDays,
-                SevenDays,
-                FourteenDays,
-                ThirtyDays,
-            }
-        
-            impl VotingPeriod {
-                /// Convert voting period to blocks (6-second block time)
-                pub fn to_blocks(&self) -> u32 {
-                    match self {
-                        VotingPeriod::ThreeDays => 3 * 24 * 60 * 10,      // 43,200 blocks
-                        VotingPeriod::SevenDays => 7 * 24 * 60 * 10,      // 100,800 blocks
-                        VotingPeriod::FourteenDays => 14 * 24 * 60 * 10,  // 201,600 blocks
-                        VotingPeriod::ThirtyDays => 30 * 24 * 60 * 10,    // 432,000 blocks
-                    }
-                }
-            }
+    #[ink::test]
+    fn test_double_voting_prevention() {
+        let mut contract = TreasuryGovernance::new();
+        contract.register_voter();
+
+        let governance_params = GovernanceParameters {
+            voting_period: VotingPeriod::ThreeDays,
+            quorum_threshold: QuorumThreshold::Five,
+            execution_delay: ExecutionDelay::Immediately,
+        };
+
+        let voting_options = VotingOptions {
+            options: vec![String::from("Yes"), String::from("No")],
+        };
+
+        let proposal_id = contract.create_proposal(
+            String::from("Double Vote Test"),
+            String::from("Testing double voting"),
+            ProposalType::Technical,
+            governance_params,
+            voting_options,
+        ).unwrap();
+
+        // First vote should succeed
+        assert!(contract.vote(proposal_id, 0).is_ok());
+
+        // Second vote should fail
+        assert_eq!(contract.vote(proposal_id, 1), Err(Error::AlreadyVoted));
+    }
+
+    #[ink::test]
+    fn test_voting_period_conversion() {
+        assert_eq!(VotingPeriod::ThreeDays.to_blocks(), 43_200);
+        assert_eq!(VotingPeriod::SevenDays.to_blocks(), 100_800);
+        assert_eq!(VotingPeriod::FourteenDays.to_blocks(), 201_600);
+        assert_eq!(VotingPeriod::ThirtyDays.to_blocks(), 432_000);
+    }
+
+    #[ink::test]
+    fn test_quorum_percentage() {
+        assert_eq!(QuorumThreshold::Five.to_percentage(), 5);
+        assert_eq!(QuorumThreshold::Ten.to_percentage(), 10);
+        assert_eq!(QuorumThreshold::Twenty.to_percentage(), 20);
+        assert_eq!(QuorumThreshold::TwentyFive.to_percentage(), 25);
+    }
+
+    #[ink::test]
+    fn test_execution_delay() {
+        assert_eq!(ExecutionDelay::Immediately.to_blocks(), 0);
+        assert_eq!(ExecutionDelay::OneDay.to_blocks(), 14_400);
+        assert_eq!(ExecutionDelay::TwoDays.to_blocks(), 28_800);
+        assert_eq!(ExecutionDelay::SevenDays.to_blocks(), 100_800);
+    }
+}
