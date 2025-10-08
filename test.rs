@@ -74,10 +74,6 @@ mod tests {
     fn set_caller(account: H160) {
         test::set_caller(account);
     }
-       
-    fn default_caller() -> H160 {
-        H160::from_low_u64_be(1)
-    }
     
     #[ink::test]
     fn test_voting() {
